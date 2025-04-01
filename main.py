@@ -5,7 +5,7 @@ import hmac
 import requests
 import io
 import streamlit as st
-import audioread
+import soundfile as sf
 import numpy as np
 
 # === ACRCloud Credentials ===
@@ -69,15 +69,11 @@ uploaded_file = st.file_uploader("DJミックスのMP3をアップロード", ty
 if uploaded_file is not None:
     st.write("⏳ 音源を解析中...")
 
-    # Convert the uploaded file to a BytesIO stream and process with audioread
+    # Convert the uploaded file to a BytesIO stream
     with io.BytesIO(uploaded_file.read()) as f:
-        with audioread.audio_open(f) as audio_file:
-            audio = np.array([])
-            # Read audio data into numpy array
-            for buf in audio_file:
-                audio = np.concatenate((audio, np.frombuffer(buf, dtype=np.float32)))
+        # Use soundfile to read the audio data from the BytesIO stream
+        audio, sr = sf.read(f)
 
-    sr = audio_file.samplerate  # Get the sample rate
     duration = len(audio) / sr  # Calculate the duration of the audio
     segment_length_ms = 30 * 1000  # 30秒で固定
     segment_length_samples = int(segment_length_ms / 1000 * sr)  # サンプル数に変換
@@ -93,7 +89,7 @@ if uploaded_file is not None:
         buffer = io.BytesIO()
 
         # Convert numpy array back to wav format and store in buffer
-        audioread.write_wav(buffer, segment, sr)  # Convert to WAV
+        sf.write(buffer, segment, sr, format='WAV')  # Save to WAV format
         buffer.seek(0)
         result = recognize(buffer)
 
