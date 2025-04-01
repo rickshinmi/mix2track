@@ -6,16 +6,17 @@ import hmac
 import requests
 import io
 import streamlit as st
-import librosa
+import audioread
 import numpy as np
 
 # === ACRCloud Credentials ===
+# APIキーを環境変数から取得
 access_key = st.secrets["api_keys"]["access_key"]
 access_secret = st.secrets["api_keys"]["access_secret"]
 host = "identify-ap-southeast-1.acrcloud.com"
 requrl = f"https://{host}/v1/identify"
 
-# === Helper Functions ===
+# === Helper ===
 def seconds_to_mmss(seconds):
     minutes = int(seconds // 60)
     sec = int(seconds % 60)
@@ -70,9 +71,15 @@ uploaded_file = st.file_uploader("DJミックスのMP3をアップロード", ty
 if uploaded_file is not None:
     st.write("⏳ 音源を解析中...")
 
-    # librosaで音声ファイルを読み込み、データをnumpy配列として取得
-    audio, sr = librosa.load(uploaded_file, sr=44100)  # sr=44100で読み込む
-    duration = len(audio) / sr  # サンプリングレートで音声の長さを計算
+    # audioreadで音声ファイルを読み込む
+    with audioread.audio_open(uploaded_file) as f:
+        audio = np.array([])
+        # Read audio data into numpy array
+        for buf in f:
+            audio = np.concatenate((audio, np.frombuffer(buf, dtype=np.float32)))
+
+    sr = f.samplerate  # Get the sample rate
+    duration = len(audio) / sr  # Calculate the duration of the audio
     segment_length_ms = 30 * 1000  # 30秒で固定
     segment_length_samples = int(segment_length_ms / 1000 * sr)  # サンプル数に変換
 
@@ -128,4 +135,4 @@ if uploaded_file is not None:
         # 結果表示（平文）
         for t, title, artist in filtered_results:
             mmss = seconds_to_mmss(t)
-            st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
+            #st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
