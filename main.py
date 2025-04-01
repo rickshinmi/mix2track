@@ -10,13 +10,12 @@ import librosa
 import numpy as np
 
 # === ACRCloud Credentials ===
-# APIキーを環境変数から取得
 access_key = st.secrets["api_keys"]["access_key"]
 access_secret = st.secrets["api_keys"]["access_secret"]
 host = "identify-ap-southeast-1.acrcloud.com"
 requrl = f"https://{host}/v1/identify"
 
-# === Helper ===
+# === Helper Functions ===
 def seconds_to_mmss(seconds):
     minutes = int(seconds // 60)
     sec = int(seconds % 60)
