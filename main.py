@@ -5,7 +5,7 @@ import hmac
 import requests
 import io
 import streamlit as st
-import soundfile as sf
+from pydub import AudioSegment
 import numpy as np
 
 # === ACRCloud Credentials ===
@@ -69,27 +69,28 @@ uploaded_file = st.file_uploader("DJミックスのMP3をアップロード", ty
 if uploaded_file is not None:
     st.write("⏳ 音源を解析中...")
 
-    # Convert the uploaded file to a BytesIO stream
+    # Use BytesIO to handle the file-like object
     with io.BytesIO(uploaded_file.read()) as f:
-        # Use soundfile to read the audio data from the BytesIO stream
-        audio, sr = sf.read(f)
+        # Load the MP3 file using pydub
+        audio = AudioSegment.from_file(f)
+        audio = audio.set_channels(1).set_frame_rate(44100)  # Mono and 44100 Hz for consistency
 
-    duration = len(audio) / sr  # Calculate the duration of the audio
-    segment_length_ms = 30 * 1000  # 30秒で固定
-    segment_length_samples = int(segment_length_ms / 1000 * sr)  # サンプル数に変換
+    duration = len(audio)  # in milliseconds
+    segment_length_ms = 30 * 1000  # 30 seconds
+    segment_length_samples = segment_length_ms  # works with pydub directly
 
     raw_results = []
     progress = st.progress(0)
 
-    # 以前に表示した曲を保存するリスト
+    # List to store previously displayed titles and artists
     displayed_titles = []
 
-    for i in range(0, len(audio), segment_length_samples):
-        segment = audio[i:i + segment_length_samples]
+    for i in range(0, duration, segment_length_ms):
+        segment = audio[i:i + segment_length_ms]
         buffer = io.BytesIO()
 
-        # Convert numpy array back to wav format and store in buffer
-        sf.write(buffer, segment, sr, format='WAV')  # Save to WAV format
+        # Export the segment to WAV and pass it to the recognition API
+        segment.export(buffer, format="wav")
         buffer.seek(0)
         result = recognize(buffer)
 
@@ -98,28 +99,27 @@ if uploaded_file is not None:
             title = metadata.get("title", "Unknown").strip()
             artist = metadata.get("artists", [{}])[0].get("name", "Unknown").strip()
 
-            # 同じ曲が表示されていないかチェック
+            # Check if the song has already been displayed
             if (title, artist) not in displayed_titles:
-                raw_results.append((i // sr, title, artist))  # サンプル数を時間に変換
-                displayed_titles.append((title, artist))  # 表示した曲をリストに追加
+                raw_results.append((i // 1000, title, artist))  # Convert ms to seconds
+                displayed_titles.append((title, artist))  # Add to displayed titles list
 
-                # 逐次結果表示
-                mmss = seconds_to_mmss(i / sr)
+                # Display results as they come in
+                mmss = seconds_to_mmss(i // 1000)
                 st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
 
-        # 更新進捗バー（1.0を超えないように）
-        progress_value = min((i + segment_length_samples) / len(audio), 1.0)
+        # Update progress bar (not exceeding 1.0)
+        progress_value = min((i + segment_length_ms) / duration, 1.0)
         progress.progress(progress_value)
 
-        # 進捗が100%になったタイミングで「解析完了！」メッセージを表示
+        # Display completion message when progress reaches 100%
         if progress_value == 1.0:
             st.success("🎉 解析完了！")
 
-    # === 結果表示（重複なし、逐次表示のみ）
+    # === Results Display (remove duplicates and show sequentially) ===
     if not raw_results:
         st.write("⚠️ 有効なトラックは見つかりませんでした。")
     else:
-        # 重複を除いて表示
         filtered_results = []
         prev_title, prev_artist = None, None
         for t, title, artist in raw_results:
@@ -127,7 +127,7 @@ if uploaded_file is not None:
                 filtered_results.append((t, title, artist))
                 prev_title, prev_artist = title, artist
 
-        # 結果表示（平文）
+        # Show results in plain text
         for t, title, artist in filtered_results:
             mmss = seconds_to_mmss(t)
             st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
