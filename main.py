@@ -6,7 +6,8 @@ import hmac
 import requests
 import io
 import streamlit as st
-from pydub import AudioSegment
+import librosa
+import numpy as np
 
 # === ACRCloud Credentials ===
 # APIキーを環境変数から取得
@@ -70,9 +71,11 @@ uploaded_file = st.file_uploader("DJミックスのMP3をアップロード", ty
 if uploaded_file is not None:
     st.write("⏳ 音源を解析中...")
 
-    audio = AudioSegment.from_file(uploaded_file)
-    duration = len(audio)
+    # librosaで音声ファイルを読み込み、データをnumpy配列として取得
+    audio, sr = librosa.load(uploaded_file, sr=44100)  # sr=44100で読み込む
+    duration = len(audio) / sr  # サンプリングレートで音声の長さを計算
     segment_length_ms = 30 * 1000  # 30秒で固定
+    segment_length_samples = int(segment_length_ms / 1000 * sr)  # サンプル数に変換
 
     raw_results = []
     progress = st.progress(0)
@@ -80,10 +83,12 @@ if uploaded_file is not None:
     # 以前に表示した曲を保存するリスト
     displayed_titles = []
 
-    for i in range(0, duration, segment_length_ms):
-        segment = audio[i:i + segment_length_ms]
+    for i in range(0, len(audio), segment_length_samples):
+        segment = audio[i:i + segment_length_samples]
         buffer = io.BytesIO()
-        segment.set_channels(1).set_frame_rate(44100).export(buffer, format="wav")
+
+        # ここでnumpy配列をWAV形式に変換して、バッファに保存
+        librosa.output.write_wav(buffer, segment, sr)  # librosaでWAV形式に保存
         buffer.seek(0)
         result = recognize(buffer)
 
@@ -94,15 +99,15 @@ if uploaded_file is not None:
 
             # 同じ曲が表示されていないかチェック
             if (title, artist) not in displayed_titles:
-                raw_results.append((i // 1000, title, artist))
+                raw_results.append((i // sr, title, artist))  # サンプル数を時間に変換
                 displayed_titles.append((title, artist))  # 表示した曲をリストに追加
 
                 # 逐次結果表示
-                mmss = seconds_to_mmss(i // 1000)
+                mmss = seconds_to_mmss(i / sr)
                 st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
 
         # 更新進捗バー（1.0を超えないように）
-        progress_value = min((i + segment_length_ms) / duration, 1.0)
+        progress_value = min((i + segment_length_samples) / len(audio), 1.0)
         progress.progress(progress_value)
 
         # 進捗が100%になったタイミングで「解析完了！」メッセージを表示
@@ -124,3 +129,4 @@ if uploaded_file is not None:
         # 結果表示（平文）
         for t, title, artist in filtered_results:
             mmss = seconds_to_mmss(t)
+            st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
