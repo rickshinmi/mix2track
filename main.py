@@ -9,6 +9,7 @@ import audioread
 import numpy as np
 
 # === ACRCloud Credentials ===
+# APIキーを環境変数から取得
 access_key = st.secrets["api_keys"]["access_key"]
 access_secret = st.secrets["api_keys"]["access_secret"]
 host = "identify-ap-southeast-1.acrcloud.com"
@@ -69,14 +70,15 @@ uploaded_file = st.file_uploader("DJミックスのMP3をアップロード", ty
 if uploaded_file is not None:
     st.write("⏳ 音源を解析中...")
 
-    # audioreadで音声ファイルを読み込む
-    with audioread.audio_open(uploaded_file) as f:
-        audio = np.array([])
-        # Read audio data into numpy array
-        for buf in f:
-            audio = np.concatenate((audio, np.frombuffer(buf, dtype=np.float32)))
+    # Convert the uploaded file to a BytesIO stream and process with audioread
+    with io.BytesIO(uploaded_file.read()) as f:
+        with audioread.audio_open(f) as audio_file:
+            audio = np.array([])
+            # Read audio data into numpy array
+            for buf in audio_file:
+                audio = np.concatenate((audio, np.frombuffer(buf, dtype=np.float32)))
 
-    sr = f.samplerate  # Get the sample rate
+    sr = audio_file.samplerate  # Get the sample rate
     duration = len(audio) / sr  # Calculate the duration of the audio
     segment_length_ms = 30 * 1000  # 30秒で固定
     segment_length_samples = int(segment_length_ms / 1000 * sr)  # サンプル数に変換
@@ -91,8 +93,8 @@ if uploaded_file is not None:
         segment = audio[i:i + segment_length_samples]
         buffer = io.BytesIO()
 
-        # ここでnumpy配列をWAV形式に変換して、バッファに保存
-        audioread.write_wav(buffer, segment, sr)  # audioreadでWAV形式に保存
+        # Convert numpy array back to wav format and store in buffer
+        audioread.write_wav(buffer, segment, sr)  # Convert to WAV
         buffer.seek(0)
         result = recognize(buffer)
 
