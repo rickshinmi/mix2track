@@ -133,4 +133,4 @@ if uploaded_file is not None:
         # 結果表示（平文）
         for t, title, artist in filtered_results:
             mmss = seconds_to_mmss(t)
-            I #st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
+            st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
