@@ -5,8 +5,8 @@ import hmac
 import requests
 import io
 import streamlit as st
-import soundfile as sf
 import numpy as np
+import torchaudio
 
 # === ACRCloud Credentials ===
 access_key = st.secrets["api_keys"]["access_key"]
@@ -56,7 +56,7 @@ def recognize(segment_bytes):
 
     try:
         response = requests.post(requrl, files=files, data=data, timeout=10)
-        response.raise_for_status()  # HTTPエラーを検出
+        response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
         error_msg = f"❌ APIリクエスト失敗: {e}"
@@ -69,7 +69,6 @@ def recognize(segment_bytes):
         print(error_msg)
         return {"status": {"msg": f"Unexpected error: {e}", "code": "N/A"}}
 
-
 # === Streamlit UI ===
 st.set_page_config(page_title="DJミックス識別アプリ", layout="centered")
 st.title("🎧 DJ mix トラック識別アプリ")
@@ -79,28 +78,39 @@ uploaded_file = st.file_uploader("DJミックスのMP3をアップロード", ty
 if uploaded_file is not None:
     st.write("⏳ 音源を解析中...")
 
-    # Use BytesIO to handle the file-like object
-    with io.BytesIO(uploaded_file.read()) as f:
-        # Use soundfile to read the audio data from the BytesIO stream
-        audio, sr = sf.read(f)
+    try:
+        with io.BytesIO(uploaded_file.read()) as f:
+            waveform, sr = torchaudio.load(f, format="mp3")
 
-    duration = len(audio) / sr  # Calculate the duration of the audio
-    segment_length_ms = 30 * 1000  # 30秒で固定
-    segment_length_samples = int(segment_length_ms / 1000 * sr)  # サンプル数に変換
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+
+        audio = waveform.squeeze().numpy()
+
+    except Exception as e:
+        st.error(f"❌ 音声ファイルの読み込みに失敗しました: {e}")
+        st.stop()
+
+    duration = len(audio) / sr
+    segment_length_ms = 30 * 1000
+    segment_length_samples = int(segment_length_ms / 1000 * sr)
 
     raw_results = []
     progress = st.progress(0)
-
-    # 以前に表示した曲を保存するリスト
     displayed_titles = []
 
     for i in range(0, len(audio), segment_length_samples):
         segment = audio[i:i + segment_length_samples]
         buffer = io.BytesIO()
 
-        # Convert numpy array back to wav format and store in buffer
-        sf.write(buffer, segment, sr, format='WAV')  # Save to WAV format
-        buffer.seek(0)
+        try:
+            import soundfile as sf
+            sf.write(buffer, segment, sr, format='WAV')
+            buffer.seek(0)
+        except Exception as e:
+            st.error(f"❌ セグメントの書き込みに失敗しました: {e}")
+            continue
+
         result = recognize(buffer)
 
         if result.get("status", {}).get("msg") == "Success":
@@ -108,28 +118,22 @@ if uploaded_file is not None:
             title = metadata.get("title", "Unknown").strip()
             artist = metadata.get("artists", [{}])[0].get("name", "Unknown").strip()
 
-            # 同じ曲が表示されていないかチェック
             if (title, artist) not in displayed_titles:
-                raw_results.append((i // sr, title, artist))  # サンプル数を時間に変換
-                displayed_titles.append((title, artist))  # 表示した曲をリストに追加
+                raw_results.append((i // sr, title, artist))
+                displayed_titles.append((title, artist))
 
-                # 逐次結果表示
                 mmss = seconds_to_mmss(i // sr)
                 st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
 
-        # 更新進捗バー（1.0を超えないように）
         progress_value = min((i + segment_length_samples) / len(audio), 1.0)
         progress.progress(progress_value)
 
-        # 進捗が100%になったタイミングで「解析完了！」メッセージを表示
         if progress_value == 1.0:
             st.success("🎉 解析完了！")
 
-    # === 結果表示（重複なし、逐次表示のみ）
     if not raw_results:
         st.write("⚠️ 有効なトラックは見つかりませんでした。")
     else:
-        # 重複を除いて表示
         filtered_results = []
         prev_title, prev_artist = None, None
         for t, title, artist in raw_results:
@@ -137,7 +141,6 @@ if uploaded_file is not None:
                 filtered_results.append((t, title, artist))
                 prev_title, prev_artist = title, artist
 
-        # 結果表示（平文）
         for t, title, artist in filtered_results:
             mmss = seconds_to_mmss(t)
             st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
