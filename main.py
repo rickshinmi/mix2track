@@ -56,9 +56,19 @@ def recognize(segment_bytes):
 
     try:
         response = requests.post(requrl, files=files, data=data, timeout=10)
+        response.raise_for_status()  # HTTPエラーを検出
         return response.json()
+    except requests.exceptions.RequestException as e:
+        error_msg = f"❌ APIリクエスト失敗: {e}"
+        st.error(error_msg)
+        print(error_msg)
+        return {"status": {"msg": f"Request failed: {e}", "code": "N/A"}}
     except Exception as e:
-        return {"status": {"msg": "Request failed", "code": "N/A"}}
+        error_msg = f"❌ その他のエラー: {e}"
+        st.error(error_msg)
+        print(error_msg)
+        return {"status": {"msg": f"Unexpected error: {e}", "code": "N/A"}}
+
 
 # === Streamlit UI ===
 st.set_page_config(page_title="DJミックス識別アプリ", layout="centered")
