@@ -1,4 +1,3 @@
-import os
 import time
 import base64
 import hashlib
@@ -10,7 +9,6 @@ import audioread
 import numpy as np
 
 # === ACRCloud Credentials ===
-# APIキーを環境変数から取得
 access_key = st.secrets["api_keys"]["access_key"]
 access_secret = st.secrets["api_keys"]["access_secret"]
 host = "identify-ap-southeast-1.acrcloud.com"
@@ -94,7 +92,7 @@ if uploaded_file is not None:
         buffer = io.BytesIO()
 
         # ここでnumpy配列をWAV形式に変換して、バッファに保存
-        librosa.output.write_wav(buffer, segment, sr)  # librosaでWAV形式に保存
+        audioread.write_wav(buffer, segment, sr)  # audioreadでWAV形式に保存
         buffer.seek(0)
         result = recognize(buffer)
 
@@ -135,4 +133,4 @@ if uploaded_file is not None:
         # 結果表示（平文）
         for t, title, artist in filtered_results:
             mmss = seconds_to_mmss(t)
-            #st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
+            I #st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
