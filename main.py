@@ -80,6 +80,7 @@ if uploaded_file is not None:
 
     try:
         with io.BytesIO(uploaded_file.read()) as f:
+            torchaudio.backend.set_audio_backend("sox_io")
             waveform, sr = torchaudio.load(f, format="mp3")
 
         if waveform.shape[0] > 1:
