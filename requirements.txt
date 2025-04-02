@@ -1,5 +1,5 @@
 streamlit
 numpy
-requests
 soundfile
 av
+requests
