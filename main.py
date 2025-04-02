@@ -16,8 +16,8 @@ access_secret = st.secrets["api_keys"]["access_secret"]
 host = "identify-ap-southeast-1.acrcloud.com"
 requrl = f"https://{host}/v1/identify"
 
-st.set_page_config(page_title="🎧 DJミックス識別（ストリーミング）", layout="centered")
-st.title("🎧 DJミックス識別（10秒ごとリアルタイム処理）")
+st.set_page_config(page_title="🎧 DJミックス識別（改善版）", layout="centered")
+st.title("🎧 DJミックス識別（20秒ごと・末尾対応）")
 
 uploaded_file = st.file_uploader("MP3ファイルをアップロード", type=["mp3"])
 
@@ -77,9 +77,9 @@ if uploaded_file is not None:
         resampler = AudioResampler(format="flt", layout="mono", rate=sr)
         st.write("🔧 リサンプラー初期化済")
 
-        segment_duration_sec = 20
-        segment_len = sr * segment_duration_sec
+        segment_duration_sec = 20   # ⬅️ セグメントを20秒に拡張！
         stride_sec = 60
+        segment_len = sr * segment_duration_sec
 
         buffer_samples = []
         total_samples = 0
@@ -99,20 +99,18 @@ if uploaded_file is not None:
 
                     while len(buffer_samples) >= segment_len:
                         segment = np.array(buffer_samples[:segment_len], dtype=np.float32)
-                        buffer_samples = buffer_samples[sr * stride_sec:]  # 30秒スキップ
+                        buffer_samples = buffer_samples[sr * stride_sec:]  # 次の30秒へ
 
                         mmss = seconds_to_mmss(segment_index * stride_sec)
-
                         buf = io.BytesIO()
                         sf.write(buf, segment, sr, format="WAV", subtype="FLOAT")
                         buf.seek(0)
 
-                        # ✅ 最初のセグメントだけWAVで確認・DL可能
                         if segment_index == 0:
                             st.info("🧪 最初のセグメントをWAVで確認できます")
                             st.audio(buf.getvalue(), format="audio/wav")
                             st.download_button(
-                                label="⬇️ 最初の10秒WAVをダウンロード",
+                                label="⬇️ 最初の20秒WAVをダウンロード",
                                 data=buf.getvalue(),
                                 file_name="segment_00_00.wav",
                                 mime="audio/wav"
@@ -134,6 +132,28 @@ if uploaded_file is not None:
 
                         segment_index += 1
                         progress.progress(min((segment_index * stride_sec * sr) / total_samples, 1.0))
+
+        # === 🧹 最後に残ったセグメントを処理する（末尾対応！）===
+        if len(buffer_samples) >= sr * 5:  # 最低5秒あれば送る
+            segment = np.array(buffer_samples[:segment_len], dtype=np.float32)
+            mmss = seconds_to_mmss(segment_index * stride_sec)
+            buf = io.BytesIO()
+            sf.write(buf, segment, sr, format="WAV", subtype="FLOAT")
+            buf.seek(0)
+
+            st.info(f"🕒 {mmss} → 末尾セグメントを識別中...")
+            result = recognize(buf)
+
+            if result.get("status", {}).get("msg") == "Success":
+                music = result['metadata']['music'][0]
+                title = music.get("title", "Unknown")
+                artist = music.get("artists", [{}])[0].get("name", "Unknown")
+                if (title, artist) not in shown:
+                    shown.append((title, artist))
+                    results.append((mmss, title, artist))
+                    st.success(f"🕒 {mmss} → 🎶 {title} / {artist}")
+            else:
+                st.warning(f"🕒 {mmss} → ❌ 未識別")
 
         st.success("🎉 識別完了！")
 
