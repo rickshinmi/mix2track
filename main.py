@@ -3,59 +3,53 @@ import av
 import numpy as np
 import soundfile as sf
 import io
+from av.audio.resampler import AudioResampler
 
-st.set_page_config(page_title="MP3 → WAV（ぷつぷつ防止）", layout="centered")
-st.title("🧪 MP3読み込み & WAV変換（frameごとモノラル対応）")
+st.set_page_config(page_title="MP3 → WAV（安定リサンプル）", layout="centered")
+st.title("🎧 安定版 MP3 → WAV（AudioResampler対応）")
 
 uploaded_file = st.file_uploader("MP3ファイルをアップロード", type=["mp3"])
 
-def read_mp3_with_pyav(file_like):
+def read_mp3_with_stable_resampler(file_like, max_frames=1000):
     try:
         file_like.seek(0)
         container = av.open(file_like)
         stream = next(s for s in container.streams if s.type == 'audio')
-        samples = []
 
-        target_sample_count = int(30 * stream.rate)
-        total_samples = 0
+        # 🎯 PyAVが安定する推奨設定：mono, float, 44100Hz
+        resampler = AudioResampler(format="flt", layout="mono", rate=44100)
+        samples = []
 
         for packet in container.demux(stream):
             for frame in packet.decode():
-                arr = frame.to_ndarray()
-                if arr.ndim == 2:
-                    arr = arr.mean(axis=1)
-                samples.append(arr)
-                total_samples += len(arr)
-
-                if len(samples) == 1:
+                frame = resampler.resample(frame)
+                arr = frame.to_ndarray().flatten()  # 既にmono + float
+                if len(samples) == 0:
                     st.write("🧪 最初のフレーム shape:", arr.shape)
                     st.write("🔍 最初のフレーム 値（先頭10個）:", arr[:10])
-                if total_samples >= target_sample_count:
+                if len(samples) >= max_frames:
                     break
-            if total_samples >= target_sample_count:
-                break
+                samples.append(arr)
 
         if not samples:
             raise ValueError("MP3から音声データを取得できませんでした。")
 
         audio = np.concatenate(samples).astype(np.float32)
-
         max_val = np.max(np.abs(audio))
         st.write("🔊 最大音量値（正規化前）:", max_val)
+
         if max_val > 0:
             audio = (audio / max_val) * 0.9
 
-        return audio, stream.rate
-    except av.AVError as e:
-        raise RuntimeError(f"PyAV エラー（AVError）: {e}")
+        return audio, 44100  # resamplerで固定済み
     except Exception as e:
-        raise RuntimeError(f"MP3読み込みエラー: {e}")
+        raise RuntimeError(f"リサンプル処理中のエラー: {e}")
 
 if uploaded_file is not None:
     st.write("📂 ファイルを受け取りました。PyAVで読み込み中...")
 
     try:
-        audio, sr = read_mp3_with_pyav(uploaded_file)
+        audio, sr = read_mp3_with_stable_resampler(uploaded_file)
         st.success(f"✅ MP3読み込み成功！サンプル数: {len(audio)}, サンプリングレート: {sr}")
     except Exception as e:
         st.error(f"❌ 読み込み失敗: {e}")
@@ -66,7 +60,7 @@ if uploaded_file is not None:
     try:
         segment = audio[:int(30 * sr)]
         buffer = io.BytesIO()
-        sf.write(buffer, segment, sr, format='WAV', subtype='FLOAT')  # float32で書き出し
+        sf.write(buffer, segment, sr, format="WAV", subtype="FLOAT")
         st.success("✅ WAVセグメント書き出し成功！（float32）")
         st.download_button("⬇️ セグメントをダウンロード", buffer.getvalue(), file_name="segment.wav", mime="audio/wav")
     except Exception as e:
