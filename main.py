@@ -4,8 +4,8 @@ import numpy as np
 import soundfile as sf
 import io
 
-st.set_page_config(page_title="MP3 → WAV セグメント変換テスト", layout="centered")
-st.title("🧪 MP3読み込み & WAV変換テスト")
+st.set_page_config(page_title="MP3 → WAV セグメント変換テスト（デバッグ付き）", layout="centered")
+st.title("🧪 MP3読み込み & WAV変換テスト（フレーム中身を確認）")
 
 uploaded_file = st.file_uploader("MP3ファイルをアップロード", type=["mp3"])
 
@@ -18,17 +18,27 @@ def read_mp3_with_pyav(file_like, max_frames=1000):
 
         for packet in container.demux(stream):
             for frame in packet.decode():
+                arr = frame.to_ndarray().flatten()
+
+                # ✅ 最初のフレームをログ出力して確認！
+                if len(samples) == 0:
+                    st.write("🧪 最初のフレーム shape:", arr.shape)
+                    st.write("🔍 最初のフレーム 値（先頭10個）:", arr[:10])
+
                 if len(samples) >= max_frames:
                     break
-                data = frame.to_ndarray().flatten()
-                samples.append(data)
+
+                samples.append(arr)
 
         if not samples:
             raise ValueError("MP3から音声データを取得できませんでした。")
 
-        # 無音対策：int16のまま扱う
         audio = np.concatenate(samples).astype(np.int16)
         sr = stream.rate
+
+        # ✅ 最大音量を確認
+        st.write("🔊 最大音量値:", np.max(np.abs(audio)))
+
         return audio, sr
     except av.AVError as e:
         raise RuntimeError(f"PyAV エラー（AVError）: {e}")
