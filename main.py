@@ -4,8 +4,8 @@ import numpy as np
 import soundfile as sf
 import io
 
-st.set_page_config(page_title="MP3 → WAV セグメント変換テスト（音量復活版）", layout="centered")
-st.title("🧪 MP3読み込み & WAV変換テスト（音量復活版）")
+st.set_page_config(page_title="MP3 → WAV セグメント変換テスト（クリップ防止版）", layout="centered")
+st.title("🧪 MP3読み込み & WAV変換テスト（自然な音質・クリップ防止）")
 
 uploaded_file = st.file_uploader("MP3ファイルをアップロード", type=["mp3"])
 
@@ -20,7 +20,7 @@ def read_mp3_with_pyav(file_like, max_frames=1000):
             for frame in packet.decode():
                 arr = frame.to_ndarray().flatten()
 
-                # ✅ 最初のフレームだけ表示
+                # ✅ 最初のフレームだけ確認
                 if len(samples) == 0:
                     st.write("🧪 最初のフレーム shape:", arr.shape)
                     st.write("🔍 最初のフレーム 値（先頭10個）:", arr[:10])
@@ -33,14 +33,13 @@ def read_mp3_with_pyav(file_like, max_frames=1000):
         if not samples:
             raise ValueError("MP3から音声データを取得できませんでした。")
 
-        # ✅ float32で扱い、正規化
         audio = np.concatenate(samples).astype(np.float32)
 
         max_val = np.max(np.abs(audio))
         st.write("🔊 最大音量値（正規化前）:", max_val)
 
         if max_val > 0:
-            audio = audio / max_val
+            audio = (audio / max_val) * 0.9  # 90%に抑えてクリップ防止
 
         return audio, stream.rate
     except av.AVError as e:
