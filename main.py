@@ -14,7 +14,6 @@ access_secret = st.secrets["api_keys"]["access_secret"]
 host = "identify-ap-southeast-1.acrcloud.com"
 requrl = f"https://{host}/v1/identify"
 
-# === Helper ===
 def seconds_to_mmss(seconds):
     minutes = int(seconds // 60)
     sec = int(seconds % 60)
@@ -54,76 +53,71 @@ def recognize(segment_bytes):
         response = requests.post(requrl, files=files, data=data, timeout=10)
         response.raise_for_status()
         return response.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"❌ APIリクエスト失敗: {e}")
-        print(f"API request error: {e}")
-        return {"status": {"msg": f"Request failed: {e}", "code": "N/A"}}
     except Exception as e:
-        st.error(f"❌ 不明なエラー: {e}")
-        print(f"Unexpected error: {e}")
-        return {"status": {"msg": f"Unexpected error: {e}", "code": "N/A"}}
+        st.error(f"❌ APIエラー: {e}")
+        print("ACRCloud error:", e)
+        return {"status": {"msg": f"Request failed: {e}", "code": "N/A"}}
 
-# === Streamlit UI ===
+# === UI ===
 st.set_page_config(page_title="DJミックス識別アプリ", layout="centered")
 st.title("🎧 DJ mix トラック識別アプリ")
 
 try:
     uploaded_file = st.file_uploader("DJミックスのMP3をアップロード", type=["mp3"])
-
     if uploaded_file is not None:
-        st.write(f"📄 アップロードされたファイル名: {uploaded_file.name}")
-        st.write("⏳ 音源を解析中...")
+        st.write(f"📄 ファイル名: {uploaded_file.name} / MIME: {uploaded_file.type}")
+        st.write("⏳ 読み込み中...")
 
         try:
-            with io.BytesIO(uploaded_file.read()) as f:
+            audio_bytes = uploaded_file.read()
+            print(f"[DEBUG] File size: {len(audio_bytes)} bytes")
+            with io.BytesIO(audio_bytes) as f:
                 audio, sr = sf.read(f)
+            print(f"[DEBUG] 読み込み成功: {len(audio)} samples, {sr} Hz")
         except Exception as e:
-            st.error(f"🔴 音声ファイルの読み込みに失敗しました: {e}")
-            print(f"sf.read() error: {e}")
+            st.error(f"❌ 音声ファイルの読み込み失敗: {e}")
+            print("[ERROR] sf.read failed:", e)
             st.stop()
 
-        duration = len(audio) / sr  # 秒
         segment_length_sec = 30
-        segment_length_samples = int(segment_length_sec * sr)
-
+        segment_len_samples = int(segment_length_sec * sr)
+        total_samples = len(audio)
         raw_results = []
-        progress = st.progress(0)
         displayed_titles = []
+        progress = st.progress(0)
 
-        for i in range(0, len(audio), segment_length_samples):
-            segment = audio[i:i + segment_length_samples]
-            buffer = io.BytesIO()
-
+        for i in range(0, total_samples, segment_len_samples):
             try:
-                sf.write(buffer, segment, sr, format='WAV')
+                segment = audio[i:i + segment_len_samples]
+                buffer = io.BytesIO()
+                sf.write(buffer, segment, sr, format="WAV")
                 buffer.seek(0)
+                result = recognize(buffer)
+
+                if result.get("status", {}).get("msg") == "Success":
+                    metadata = result['metadata']['music'][0]
+                    title = metadata.get("title", "Unknown").strip()
+                    artist = metadata.get("artists", [{}])[0].get("name", "Unknown").strip()
+                    if (title, artist) not in displayed_titles:
+                        t_sec = i // sr
+                        raw_results.append((t_sec, title, artist))
+                        displayed_titles.append((title, artist))
+                        mmss = seconds_to_mmss(t_sec)
+                        st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
+                else:
+                    msg = result.get("status", {}).get("msg", "Unknown")
+                    print(f"[DEBUG] No match at {i//sr}s → {msg}")
+
             except Exception as e:
-                st.error(f"🔴 セグメントのWAV変換に失敗: {e}")
-                print(f"WAV conversion error: {e}")
-                continue
+                st.error(f"❌ セグメント処理失敗: {e}")
+                print(f"[ERROR] Segment at {i//sr}s failed: {e}")
 
-            result = recognize(buffer)
-            status = result.get("status", {})
-            if status.get("msg") == "Success":
-                metadata = result['metadata']['music'][0]
-                title = metadata.get("title", "Unknown").strip()
-                artist = metadata.get("artists", [{}])[0].get("name", "Unknown").strip()
+            progress.progress(min((i + segment_len_samples) / total_samples, 1.0))
 
-                if (title, artist) not in displayed_titles:
-                    t_sec = i // sr
-                    raw_results.append((t_sec, title, artist))
-                    displayed_titles.append((title, artist))
-                    mmss = seconds_to_mmss(t_sec)
-                    st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
-
-            progress_value = min((i + segment_length_samples) / len(audio), 1.0)
-            progress.progress(progress_value)
-            if progress_value == 1.0:
-                st.success("🎉 解析完了！")
-
+        st.success("🎉 解析完了！")
         if not raw_results:
             st.write("⚠️ 有効なトラックは見つかりませんでした。")
 
 except Exception as e:
-    st.error(f"❌ アプリケーションエラー: {e}")
-    print(f"Global error: {e}")
+    st.error(f"❌ アプリ全体でのエラー: {e}")
+    print("[FATAL] Top-level error:", e)
