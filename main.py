@@ -77,7 +77,7 @@ if uploaded_file is not None:
         resampler = AudioResampler(format="flt", layout="mono", rate=sr)
         st.write("🔧 リサンプラー初期化済")
 
-        segment_duration_sec = 30   # ⬅️ セグメントを20秒に拡張！
+        segment_duration_sec = 25   # ⬅️ セグメントを20秒に拡張！
         stride_sec = 30
         segment_len = sr * segment_duration_sec
 
