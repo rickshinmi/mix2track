@@ -77,7 +77,7 @@ if uploaded_file is not None:
     st.write("📥 ファイルを受け取りました。解析を開始します...")
     file_ext = uploaded_file.name.split('.')[-1].lower()
     sr = 44100
-    segment_duration_sec = 20
+    segment_duration_sec = 25
     stride_sec = 30
     segment_len = sr * segment_duration_sec
     buffer_samples = []
