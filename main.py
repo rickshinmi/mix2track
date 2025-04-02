@@ -78,7 +78,7 @@ if uploaded_file is not None:
         st.write("🔧 リサンプラー初期化済")
 
         segment_duration_sec = 20   # ⬅️ セグメントを20秒に拡張！
-        stride_sec = 60
+        stride_sec = 30
         segment_len = sr * segment_duration_sec
 
         buffer_samples = []
