@@ -21,28 +21,18 @@ st.title("🎧 DJミックス識別（30秒ごとに10秒間）")
 
 uploaded_file = st.file_uploader("MP3ファイルをアップロード", type=["mp3"])
 
-# === 安定リサンプリング & 詳細ログ付き読み込み ===
+# === 詳細ログ付き・max_frames=None 対応済の読み込み関数 ===
 def read_mp3_with_resampler_debug(file_like, max_frames=None):
     try:
         st.write("📦 ファイルサイズ:", len(file_like.getbuffer()), "bytes")
         file_like.seek(0)
 
-        try:
-            container = av.open(file_like)
-        except Exception as e:
-            raise RuntimeError(f"💥 PyAVオープンエラー: {e}")
+        container = av.open(file_like)
+        stream = next(s for s in container.streams if s.type == 'audio')
+        st.write("🎧 ストリーム検出: ", stream)
 
-        try:
-            stream = next(s for s in container.streams if s.type == 'audio')
-            st.write("🎧 ストリーム検出: ", stream)
-        except Exception as e:
-            raise RuntimeError(f"💥 オーディオストリーム取得エラー: {e}")
-
-        try:
-            resampler = AudioResampler(format="flt", layout="mono", rate=44100)
-            st.write("🔧 リサンプラー初期化済")
-        except Exception as e:
-            raise RuntimeError(f"💥 リサンプラー初期化エラー: {e}")
+        resampler = AudioResampler(format="flt", layout="mono", rate=44100)
+        st.write("🔧 リサンプラー初期化済")
 
         samples = []
         packet_count = 0
@@ -53,17 +43,16 @@ def read_mp3_with_resampler_debug(file_like, max_frames=None):
             packet_count += 1
             for frame in packet.decode():
                 frame_count += 1
-                try:
-                    resampled_frames = resampler.resample(frame)
-                    for mono_frame in resampled_frames:
-                        arr = mono_frame.to_ndarray().flatten()
-                        samples.append(arr)
-                        resampled_count += 1
-                        if len(samples) >= max_frames:
-                            break
-                except Exception as e:
-                    raise RuntimeError(f"💥 フレームリサンプルエラー（packet {packet_count}, frame {frame_count}）: {e}")
-            if len(samples) >= max_frames:
+                resampled_frames = resampler.resample(frame)
+                for mono_frame in resampled_frames:
+                    arr = mono_frame.to_ndarray().flatten()
+                    samples.append(arr)
+                    resampled_count += 1
+                    if max_frames is not None and len(samples) >= max_frames:
+                        break
+                if max_frames is not None and len(samples) >= max_frames:
+                    break
+            if max_frames is not None and len(samples) >= max_frames:
                 break
 
         st.write(f"✅ パケット: {packet_count}, フレーム: {frame_count}, リサンプル済: {resampled_count}")
@@ -132,7 +121,7 @@ if uploaded_file is not None:
     st.write("📥 ファイルを受け取りました。読み込み中...")
 
     try:
-        audio, sr = read_mp3_with_resampler_debug(uploaded_file)
+        audio, sr = read_mp3_with_resampler_debug(uploaded_file, max_frames=None)
         st.success(f"✅ 音声読み込み成功（長さ: {len(audio)/sr:.1f} 秒）")
     except Exception as e:
         st.error(str(e))
