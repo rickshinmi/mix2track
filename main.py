@@ -22,7 +22,7 @@ st.title("🎧 DJミックス識別（30秒ごとに10秒間）")
 uploaded_file = st.file_uploader("MP3ファイルをアップロード", type=["mp3"])
 
 # === 安定リサンプリング & 詳細ログ付き読み込み ===
-def read_mp3_with_resampler_debug(file_like, max_frames=20000):
+def read_mp3_with_resampler_debug(file_like, max_frames=None):
     try:
         st.write("📦 ファイルサイズ:", len(file_like.getbuffer()), "bytes")
         file_like.seek(0)
