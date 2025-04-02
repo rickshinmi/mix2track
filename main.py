@@ -9,29 +9,31 @@ st.title("🧪 MP3読み込み & WAV変換（frameごとモノラル対応）")
 
 uploaded_file = st.file_uploader("MP3ファイルをアップロード", type=["mp3"])
 
-def read_mp3_with_pyav(file_like, max_frames=1000):
+def read_mp3_with_pyav(file_like):
     try:
         file_like.seek(0)
         container = av.open(file_like)
         stream = next(s for s in container.streams if s.type == 'audio')
         samples = []
 
+        target_sample_count = int(30 * stream.rate)
+        total_samples = 0
+
         for packet in container.demux(stream):
             for frame in packet.decode():
                 arr = frame.to_ndarray()
-
-                # ✅ ここでフレームごとにモノラル化
-                if arr.ndim == 2:  # ステレオなど
+                if arr.ndim == 2:
                     arr = arr.mean(axis=1)
+                samples.append(arr)
+                total_samples += len(arr)
 
-                if len(samples) == 0:
+                if len(samples) == 1:
                     st.write("🧪 最初のフレーム shape:", arr.shape)
                     st.write("🔍 最初のフレーム 値（先頭10個）:", arr[:10])
-
-                if len(samples) >= max_frames:
+                if total_samples >= target_sample_count:
                     break
-
-                samples.append(arr)
+            if total_samples >= target_sample_count:
+                break
 
         if not samples:
             raise ValueError("MP3から音声データを取得できませんでした。")
@@ -40,7 +42,6 @@ def read_mp3_with_pyav(file_like, max_frames=1000):
 
         max_val = np.max(np.abs(audio))
         st.write("🔊 最大音量値（正規化前）:", max_val)
-
         if max_val > 0:
             audio = (audio / max_val) * 0.9
 
