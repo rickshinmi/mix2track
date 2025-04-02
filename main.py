@@ -4,9 +4,10 @@ import hashlib
 import hmac
 import requests
 import io
+import av
+import numpy as np
 import streamlit as st
 import soundfile as sf
-import numpy as np
 
 # === ACRCloud Credentials ===
 access_key = st.secrets["api_keys"]["access_key"]
@@ -65,22 +66,44 @@ def recognize(segment_bytes):
         st.error(f"❌ その他のエラー: {e}")
         return {"status": {"msg": f"Unexpected error: {e}", "code": "N/A"}}
 
-# === Streamlit UI ===
-st.set_page_config(page_title="DJミックス識別アプリ", layout="centered")
-st.title("🎧 DJ mix トラック識別アプリ")
+# === PyAV を使って MP3 を NumPy に読み込む ===
+def read_mp3_with_pyav(file_like):
+    try:
+        container = av.open(file_like)
+        stream = next(s for s in container.streams if s.type == 'audio')
+        samples = []
 
-uploaded_file = st.file_uploader("DJミックスのWAV音源をアップロード", type=["wav"])
+        for packet in container.demux(stream):
+            for frame in packet.decode():
+                data = frame.to_ndarray()
+                samples.append(data)
+
+        if not samples:
+            raise ValueError("MP3から音声データを取得できませんでした。")
+
+        audio = np.concatenate(samples).astype(np.float32) / 32768.0  # 16bit int to float32
+        sr = stream.rate
+        return audio, sr
+    except Exception as e:
+        raise RuntimeError(f"MP3読み込みエラー: {e}")
+
+# === Streamlit UI ===
+st.set_page_config(page_title="MP3対応 DJミックス識別アプリ", layout="centered")
+st.title("🎧 MP3対応 DJ mix トラック識別アプリ")
+
+uploaded_file = st.file_uploader("DJミックスのMP3をアップロード", type=["mp3"])
 
 if uploaded_file is not None:
-    st.write("⏳ 音源を解析中...")
+    st.write("⏳ 音源を読み込み中...")
 
     try:
-        audio, sr = sf.read(uploaded_file)
-        if audio.ndim > 1:
-            audio = audio.mean(axis=1)  # モノラルに変換
+        audio, sr = read_mp3_with_pyav(uploaded_file)
     except Exception as e:
-        st.error(f"❌ 音源の読み込みに失敗しました: {e}")
+        st.error(str(e))
         st.stop()
+
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
 
     duration = len(audio) / sr
     segment_length_sec = 30
@@ -133,4 +156,4 @@ if uploaded_file is not None:
 
         for t, title, artist in filtered_results:
             mmss = seconds_to_mmss(t)
-            #st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
+            st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
