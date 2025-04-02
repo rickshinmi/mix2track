@@ -1,5 +1,5 @@
 streamlit
-soundfile
-requests
 numpy
-torchaudio
+requests
+soundfile
+av
