@@ -16,7 +16,7 @@ access_secret = st.secrets["api_keys"]["access_secret"]
 host = "identify-ap-southeast-1.acrcloud.com"
 requrl = f"https://{host}/v1/identify"
 
-st.set_page_config(page_title="🎧 DJミックス識別（MP3/WAV対応）", layout="centered")
+st.set_page_config(page_title="🎧 DJミックス識別（MP3/WAV対応・堅牢）", layout="centered")
 st.title("🎧 DJミックス識別アプリ")
 
 uploaded_file = st.file_uploader("DJミックスファイルをアップロード（MP3またはWAV）", type=["mp3", "wav"])
@@ -57,14 +57,12 @@ def seconds_to_mmss(seconds):
     s = int(seconds % 60)
     return f"{m:02d}:{s:02d}"
 
-# === 共通処理 ===
 def process_segment(segment_index, segment, sr, shown, results, stride_sec):
     mmss = seconds_to_mmss(segment_index * stride_sec)
     buf = io.BytesIO()
     sf.write(buf, segment, sr, format="WAV", subtype="FLOAT")
     buf.seek(0)
 
-    # 🎧 最初のセグメントを確認・DL可能に
     if segment_index == 0:
         st.info("🧪 最初のセグメントをWAVで確認できます")
         st.audio(buf.getvalue(), format="audio/wav")
@@ -107,27 +105,54 @@ if uploaded_file is not None:
     try:
         if file_ext == "wav":
             st.write("🔍 WAVファイルとして読み込みます")
-            audio_data, sr_in = sf.read(uploaded_file)
+            try:
+                audio_data, sr_in = sf.read(uploaded_file)
+            except Exception as e:
+                st.error(f"❌ WAV読み込みに失敗しました: {e}")
+                st.stop()
+
             if audio_data.ndim > 1:
                 audio_data = np.mean(audio_data, axis=1)  # モノラル化
+
             if sr_in != sr:
-                st.warning("⚠️ サンプリングレートが44100Hzではないため、変換は未対応です")
+                st.error(f"⚠️ サンプリングレートが {sr_in}Hz です。44100Hz のみ対応しています。")
                 st.stop()
+
             buffer_samples = audio_data.tolist()
+            total_len = len(buffer_samples)
+
+            while len(buffer_samples) >= segment_len:
+                segment = np.array(buffer_samples[:segment_len], dtype=np.float32)
+                buffer_samples = buffer_samples[sr * stride_sec:]
+                process_segment(segment_index, segment, sr, shown, results, stride_sec)
+                segment_index += 1
+                progress.progress(min((segment_index * stride_sec * sr) / total_len, 1.0))
 
         elif file_ext == "mp3":
             st.write("🔍 MP3ファイルとして読み込みます（ストリーミング処理）")
-            file_like = io.BytesIO(uploaded_file.read())
-            container = av.open(file_like)
-            stream = next(s for s in container.streams if s.type == 'audio')
-            resampler = AudioResampler(format="flt", layout="mono", rate=sr)
+            try:
+                file_like = io.BytesIO(uploaded_file.read())
+                container = av.open(file_like)
+                stream = next(s for s in container.streams if s.type == 'audio')
+                resampler = AudioResampler(format="flt", layout="mono", rate=sr)
+            except Exception as e:
+                st.error(f"❌ MP3読み込みに失敗しました: {e}")
+                st.stop()
 
             total_samples = 0
             for packet in container.demux(stream):
                 for frame in packet.decode():
-                    resampled = resampler.resample(frame)
+                    try:
+                        resampled = resampler.resample(frame)
+                    except Exception as e:
+                        st.warning(f"⚠️ リサンプル中にエラー: {e}")
+                        continue
                     for mono_frame in resampled:
-                        samples = mono_frame.to_ndarray().flatten()
+                        try:
+                            samples = mono_frame.to_ndarray().flatten()
+                        except Exception as e:
+                            st.warning(f"⚠️ ndarray変換中にエラー: {e}")
+                            continue
                         buffer_samples.extend(samples)
                         total_samples += len(samples)
 
@@ -138,17 +163,7 @@ if uploaded_file is not None:
                             segment_index += 1
                             progress.progress(min((segment_index * stride_sec * sr) / total_samples, 1.0))
 
-        # === WAVの場合のセグメント処理 ===
-        if file_ext == "wav":
-            total_len = len(buffer_samples)
-            while len(buffer_samples) >= segment_len:
-                segment = np.array(buffer_samples[:segment_len], dtype=np.float32)
-                buffer_samples = buffer_samples[sr * stride_sec:]
-                process_segment(segment_index, segment, sr, shown, results, stride_sec)
-                segment_index += 1
-                progress.progress(min((segment_index * stride_sec * sr) / total_len, 1.0))
-
-        # === 最後のセグメントも処理する（5秒以上あれば） ===
+        # 最後のセグメントも処理（5秒以上あれば）
         if len(buffer_samples) >= sr * 5:
             segment = np.array(buffer_samples[:segment_len], dtype=np.float32)
             process_segment(segment_index, segment, sr, shown, results, stride_sec)
@@ -163,4 +178,4 @@ if uploaded_file is not None:
             st.write("⚠️ トラックは識別されませんでした。")
 
     except Exception as e:
-        st.error(f"❌ エラー: {e}")
+        st.error(f"❌ 処理全体で予期しないエラーが発生しました: {e}")
