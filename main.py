@@ -10,7 +10,7 @@ import requests
 import time
 from av.audio.resampler import AudioResampler
 
-# === ACRCloud credentials from secrets ===
+# === ACRCloud API設定 ===
 access_key = st.secrets["api_keys"]["access_key"]
 access_secret = st.secrets["api_keys"]["access_secret"]
 host = "identify-ap-southeast-1.acrcloud.com"
@@ -21,37 +21,65 @@ st.title("🎧 DJミックス識別（30秒ごとに10秒間）")
 
 uploaded_file = st.file_uploader("MP3ファイルをアップロード", type=["mp3"])
 
-# === Audio decoding and resampling ===
-def read_mp3_with_resampler(file_like, max_frames=20000):
+# === 詳細ログ付き 音声読み込み関数 ===
+def read_mp3_with_resampler_debug(file_like, max_frames=20000):
     try:
+        st.write("📦 ファイルサイズ:", len(file_like.getbuffer()), "bytes")
         file_like.seek(0)
-        container = av.open(file_like)
-        stream = next(s for s in container.streams if s.type == 'audio')
 
-        resampler = AudioResampler(format="flt", layout="mono", rate=44100)
+        try:
+            container = av.open(file_like)
+        except Exception as e:
+            raise RuntimeError(f"💥 PyAVオープンエラー: {e}")
+
+        try:
+            stream = next(s for s in container.streams if s.type == 'audio')
+            st.write("🎧 ストリーム検出: ", stream)
+        except Exception as e:
+            raise RuntimeError(f"💥 オーディオストリーム取得エラー: {e}")
+
+        try:
+            resampler = AudioResampler(format="flt", layout="mono", rate=44100)
+            st.write("🔧 リサンプラー初期化済")
+        except Exception as e:
+            raise RuntimeError(f"💥 リサンプラー初期化エラー: {e}")
+
         samples = []
+        packet_count = 0
+        frame_count = 0
+        resampled_count = 0
 
         for packet in container.demux(stream):
+            packet_count += 1
             for frame in packet.decode():
-                for resampled_frame in resampler.resample(frame):
-                    arr = resampled_frame.to_ndarray().flatten()
-                    samples.append(arr)
-                    if len(samples) >= max_frames:
-                        break
+                frame_count += 1
+                try:
+                    resampled_frames = resampler.resample(frame)
+                    for mono_frame in resampled_frames:
+                        arr = mono_frame.to_ndarray().flatten()
+                        samples.append(arr)
+                        resampled_count += 1
+                        if len(samples) >= max_frames:
+                            raise StopIteration
+                except Exception as e:
+                    raise RuntimeError(f"💥 フレームリサンプルエラー（packet {packet_count}, frame {frame_count}）: {e}")
+        st.write(f"✅ パケット: {packet_count}, フレーム: {frame_count}, リサンプル済: {resampled_count}")
 
         if not samples:
             raise ValueError("MP3から音声データを取得できませんでした。")
 
         audio = np.concatenate(samples).astype(np.float32)
         max_val = np.max(np.abs(audio))
+        st.write("🔊 最大音量（正規化前）:", max_val)
+
         if max_val > 0:
             audio = (audio / max_val) * 0.9
 
         return audio, 44100
     except Exception as e:
-        raise RuntimeError(f"読み込みエラー: {e}")
+        raise RuntimeError(f"🔴 音声処理中の致命的エラー: {e}")
 
-# === ACRCloud helper ===
+# === ACRCloudヘルパー ===
 def build_signature():
     http_method = "POST"
     http_uri = "/v1/identify"
@@ -96,18 +124,18 @@ def seconds_to_mmss(seconds):
     s = int(seconds % 60)
     return f"{m:02d}:{s:02d}"
 
-# === Main logic ===
+# === メイン処理 ===
 if uploaded_file is not None:
     st.write("📥 ファイルを受け取りました。読み込み中...")
 
     try:
-        audio, sr = read_mp3_with_resampler(uploaded_file)
+        audio, sr = read_mp3_with_resampler_debug(uploaded_file)
         st.success(f"✅ 音声読み込み成功（長さ: {len(audio)/sr:.1f} 秒）")
     except Exception as e:
         st.error(str(e))
         st.stop()
 
-    # === 30秒ごとに10秒だけサンプリング ===
+    # === 30秒ごとに10秒だけ抽出して識別 ===
     segment_duration_sec = 10
     stride_sec = 30
     segment_len = int(segment_duration_sec * sr)
@@ -121,7 +149,7 @@ if uploaded_file is not None:
     for i in range(0, len(audio), stride_len):
         segment = audio[i : i + segment_len]
         if len(segment) < segment_len:
-            break  # 最後が10秒未満ならスキップ
+            break
 
         buffer = io.BytesIO()
         sf.write(buffer, segment, sr, format="WAV", subtype="FLOAT")
