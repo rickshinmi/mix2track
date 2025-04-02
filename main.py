@@ -66,7 +66,7 @@ def recognize(segment_bytes):
         st.error(f"❌ その他のエラー: {e}")
         return {"status": {"msg": f"Unexpected error: {e}", "code": "N/A"}}
 
-# === PyAVでMP3を読み込む関数（修正版）===
+# === PyAVでMP3を読み込む関数（修正版＋ログ） ===
 def read_mp3_with_pyav(file_like):
     try:
         container = av.open(file_like)
@@ -75,7 +75,7 @@ def read_mp3_with_pyav(file_like):
 
         for packet in container.demux(stream):
             for frame in packet.decode():
-                data = frame.to_ndarray().flatten()  # フレームを1Dにして統一
+                data = frame.to_ndarray().flatten()  # shape 統一
                 samples.append(data)
 
         if not samples:
@@ -94,18 +94,22 @@ st.title("🎧 MP3対応 DJ mix トラック識別アプリ")
 uploaded_file = st.file_uploader("DJミックスのMP3ファイルをアップロード", type=["mp3"])
 
 if uploaded_file is not None:
-    st.write("⏳ 音源を読み込み中...")
+    st.write("📥 ファイルをアップロードしました。PyAVで読み込みを開始します...")
 
     try:
         audio, sr = read_mp3_with_pyav(uploaded_file)
+        st.write(f"✅ 読み込み成功！サンプル数: {len(audio)}, サンプリングレート: {sr}")
     except Exception as e:
         st.error(str(e))
         st.stop()
 
     if audio.ndim > 1:
-        audio = audio.mean(axis=1)  # モノラルに変換
+        st.write("🎚 ステレオ音源をモノラルに変換中...")
+        audio = audio.mean(axis=1)
 
-    duration = len(audio) / sr
+    st.write(f"⏱ 音声長: {len(audio)/sr:.2f} 秒")
+    st.write("🔄 30秒ごとに分割して解析を開始します...")
+
     segment_length_sec = 30
     segment_length_samples = int(segment_length_sec * sr)
 
@@ -137,6 +141,8 @@ if uploaded_file is not None:
 
                 mmss = seconds_to_mmss(i // sr)
                 st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
+        else:
+            st.write(f"🕒 {seconds_to_mmss(i // sr)} → ❌ 認識失敗")
 
         progress_value = min((i + segment_length_samples) / len(audio), 1.0)
         progress.progress(progress_value)
@@ -147,6 +153,7 @@ if uploaded_file is not None:
     if not raw_results:
         st.write("⚠️ 有効なトラックは見つかりませんでした。")
     else:
+        st.write("✅ 重複を除いた認識結果一覧：")
         filtered_results = []
         prev_title, prev_artist = None, None
         for t, title, artist in raw_results:
