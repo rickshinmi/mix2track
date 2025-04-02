@@ -75,13 +75,14 @@ def read_mp3_with_pyav(file_like):
 
         for packet in container.demux(stream):
             for frame in packet.decode():
-                data = frame.to_ndarray()
+                # 各フレームをflattenして1Dにする
+                data = frame.to_ndarray().flatten()
                 samples.append(data)
 
         if not samples:
             raise ValueError("MP3から音声データを取得できませんでした。")
 
-        audio = np.concatenate(samples).astype(np.float32) / 32768.0  # 16bit int to float32
+        audio = np.concatenate(samples).astype(np.float32) / 32768.0  # int16 → float32正規化
         sr = stream.rate
         return audio, sr
     except Exception as e:
