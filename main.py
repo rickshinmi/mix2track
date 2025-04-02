@@ -60,7 +60,7 @@ def seconds_to_mmss(seconds):
 
 # === メイン処理 ===
 st.set_page_config(page_title="🎧 TRACKLIST GUY", layout="centered")
-st.title("🎧 THE TRACKLIST GUY")
+st.title("🎧 TRACKLIST GUY")
 
 uploaded_file = st.file_uploader("DJミックスファイルをアップロード（MP3またはWAV）", type=["mp3", "wav"])
 
