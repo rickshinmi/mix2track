@@ -21,7 +21,7 @@ st.title("🎧 DJミックス識別（30秒ごとに10秒間）")
 
 uploaded_file = st.file_uploader("MP3ファイルをアップロード", type=["mp3"])
 
-# === 詳細ログ付き 音声読み込み関数 ===
+# === 安定リサンプリング & 詳細ログ付き読み込み ===
 def read_mp3_with_resampler_debug(file_like, max_frames=20000):
     try:
         st.write("📦 ファイルサイズ:", len(file_like.getbuffer()), "bytes")
@@ -60,9 +60,12 @@ def read_mp3_with_resampler_debug(file_like, max_frames=20000):
                         samples.append(arr)
                         resampled_count += 1
                         if len(samples) >= max_frames:
-                            raise StopIteration
+                            break
                 except Exception as e:
                     raise RuntimeError(f"💥 フレームリサンプルエラー（packet {packet_count}, frame {frame_count}）: {e}")
+            if len(samples) >= max_frames:
+                break
+
         st.write(f"✅ パケット: {packet_count}, フレーム: {frame_count}, リサンプル済: {resampled_count}")
 
         if not samples:
@@ -79,7 +82,7 @@ def read_mp3_with_resampler_debug(file_like, max_frames=20000):
     except Exception as e:
         raise RuntimeError(f"🔴 音声処理中の致命的エラー: {e}")
 
-# === ACRCloudヘルパー ===
+# === ACRCloud認識ヘルパー ===
 def build_signature():
     http_method = "POST"
     http_uri = "/v1/identify"
@@ -135,7 +138,7 @@ if uploaded_file is not None:
         st.error(str(e))
         st.stop()
 
-    # === 30秒ごとに10秒だけ抽出して識別 ===
+    # === セグメント設定（30秒ごとに10秒）===
     segment_duration_sec = 10
     stride_sec = 30
     segment_len = int(segment_duration_sec * sr)
