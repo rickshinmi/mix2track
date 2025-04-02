@@ -94,18 +94,21 @@ st.title("🎧 MP3対応 DJ mix トラック識別アプリ")
 uploaded_file = st.file_uploader("DJミックスのMP3ファイルをアップロード", type=["mp3"])
 
 if uploaded_file is not None:
-    st.write("📥 ファイルをアップロードしました。PyAVで読み込みを開始します...")
-
     try:
+        st.write("📥 ファイルをアップロードしました。PyAVで読み込みを開始します...")
+
         audio, sr = read_mp3_with_pyav(uploaded_file)
         st.write(f"✅ 読み込み成功！サンプル数: {len(audio)}, サンプリングレート: {sr}")
-    except Exception as e:
-        st.error(str(e))
-        st.stop()
 
-    if audio.ndim > 1:
-        st.write("🎚 ステレオ音源をモノラルに変換中...")
-        audio = audio.mean(axis=1)
+        if audio.ndim > 1:
+            st.write("🎚 ステレオ音源をモノラルに変換中...")
+            audio = audio.mean(axis=1)
+
+        # 残りの処理（分割、認識）...
+
+    except Exception as e:
+        st.error(f"❌ アプリ実行中にエラーが発生しました: {e}")
+        st.stop()
 
     st.write(f"⏱ 音声長: {len(audio)/sr:.2f} 秒")
     st.write("🔄 30秒ごとに分割して解析を開始します...")
