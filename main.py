@@ -16,7 +16,7 @@ access_secret = st.secrets["api_keys"]["access_secret"]
 host = "identify-ap-southeast-1.acrcloud.com"
 requrl = f"https://{host}/v1/identify"
 
-st.set_page_config(page_title="🎧 DJミックス識別（識別進捗）", layout="centered")
+st.set_page_config(page_title="🎧 DJミックス識別（動的進捗）", layout="centered")
 st.title("🎧 DJミックス識別アプリ")
 
 uploaded_file = st.file_uploader("DJミックスファイルをアップロード（MP3またはWAV）", type=["mp3", "wav"])
@@ -77,7 +77,7 @@ if uploaded_file is not None:
     st.write("📥 ファイルを受け取りました。解析を開始します...")
     file_ext = uploaded_file.name.split('.')[-1].lower()
     sr = 44100
-    segment_duration_sec = 25
+    segment_duration_sec = 20
     stride_sec = 30
     segment_len = sr * segment_duration_sec
     buffer_samples = []
@@ -86,8 +86,9 @@ if uploaded_file is not None:
 
     progress = st.progress(0)
     progress_text = st.empty()
+
     recognized_count = 0
-    total_segments_estimate = 0
+    max_progress_count = 1  # 動的に更新される安全な初期値
 
     try:
         if file_ext == "wav":
@@ -98,9 +99,6 @@ if uploaded_file is not None:
                 st.error(f"⚠️ サンプリングレートが {sr_in}Hz です。44100Hz のみ対応しています。")
                 st.stop()
             buffer_samples = audio_data.tolist()
-            total_len = len(buffer_samples)
-
-            total_segments_estimate = total_len // (sr * stride_sec)
 
             while len(buffer_samples) >= segment_len:
                 segment = np.array(buffer_samples[:segment_len], dtype=np.float32)
@@ -108,9 +106,10 @@ if uploaded_file is not None:
                 process_segment(segment_index, segment, sr, shown, stride_sec)
                 segment_index += 1
                 recognized_count += 1
-                progress_ratio = recognized_count / total_segments_estimate
-                progress.progress(min(progress_ratio, 1.0))
-                progress_text.text(f"識別進捗: {progress_ratio * 100:.1f}%")
+                max_progress_count = max(max_progress_count, recognized_count)
+                progress_ratio = recognized_count / max_progress_count
+                progress.progress(progress_ratio)
+                progress_text.text(f"識別済み: {recognized_count} / {max_progress_count}（{progress_ratio * 100:.1f}%）")
 
         elif file_ext == "mp3":
             try:
@@ -121,11 +120,6 @@ if uploaded_file is not None:
             except Exception as e:
                 st.error(f"❌ MP3読み込みに失敗しました: {e}")
                 st.stop()
-
-            # 見積もり：ファイルサイズから30秒ごとのセグメント数を仮算出
-            total_bytes = uploaded_file.size
-            est_duration_sec = total_bytes / 16000  # rough: 16KB/sec MP3
-            total_segments_estimate = max(1, int(est_duration_sec // stride_sec))
 
             for packet in container.demux(stream):
                 for frame in packet.decode():
@@ -146,19 +140,22 @@ if uploaded_file is not None:
                             process_segment(segment_index, segment, sr, shown, stride_sec)
                             segment_index += 1
                             recognized_count += 1
-                            progress_ratio = recognized_count / total_segments_estimate
-                            progress.progress(min(progress_ratio, 1.0))
-                            progress_text.text(f"識別進捗: {progress_ratio * 100:.1f}%")
+                            max_progress_count = max(max_progress_count, recognized_count)
+                            progress_ratio = recognized_count / max_progress_count
+                            progress.progress(progress_ratio)
+                            progress_text.text(f"識別済み: {recognized_count} / {max_progress_count}（{progress_ratio * 100:.1f}%）")
 
         if len(buffer_samples) >= sr * 5:
             segment = np.array(buffer_samples[:segment_len], dtype=np.float32)
             process_segment(segment_index, segment, sr, shown, stride_sec)
             recognized_count += 1
-            progress_ratio = recognized_count / total_segments_estimate
-            progress.progress(min(progress_ratio, 1.0))
-            progress_text.text(f"識別進捗: {progress_ratio * 100:.1f}%")
+            max_progress_count = max(max_progress_count, recognized_count)
+            progress_ratio = recognized_count / max_progress_count
+            progress.progress(progress_ratio)
+            progress_text.text(f"識別済み: {recognized_count} / {max_progress_count}（{progress_ratio * 100:.1f}%）")
 
         st.success("🎉 識別完了！")
 
     except Exception as e:
         st.error(f"❌ 処理エラー: {e}")
+
