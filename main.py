@@ -16,62 +16,12 @@ access_secret = st.secrets["api_keys"]["access_secret"]
 host = "identify-ap-southeast-1.acrcloud.com"
 requrl = f"https://{host}/v1/identify"
 
-st.set_page_config(page_title="DJミックス識別ループ", layout="centered")
-st.title("🎧 DJミックス識別（30秒ごとに10秒間）")
+st.set_page_config(page_title="🎧 DJミックス識別（ストリーミング）", layout="centered")
+st.title("🎧 DJミックス識別（10秒ごとリアルタイム処理）")
 
 uploaded_file = st.file_uploader("MP3ファイルをアップロード", type=["mp3"])
 
-# === 詳細ログ付き・max_frames=None 対応済の読み込み関数 ===
-def read_mp3_with_resampler_debug(file_like, max_frames=None):
-    try:
-        st.write("📦 ファイルサイズ:", len(file_like.getbuffer()), "bytes")
-        file_like.seek(0)
-
-        container = av.open(file_like)
-        stream = next(s for s in container.streams if s.type == 'audio')
-        st.write("🎧 ストリーム検出: ", stream)
-
-        resampler = AudioResampler(format="flt", layout="mono", rate=44100)
-        st.write("🔧 リサンプラー初期化済")
-
-        samples = []
-        packet_count = 0
-        frame_count = 0
-        resampled_count = 0
-
-        for packet in container.demux(stream):
-            packet_count += 1
-            for frame in packet.decode():
-                frame_count += 1
-                resampled_frames = resampler.resample(frame)
-                for mono_frame in resampled_frames:
-                    arr = mono_frame.to_ndarray().flatten()
-                    samples.append(arr)
-                    resampled_count += 1
-                    if max_frames is not None and len(samples) >= max_frames:
-                        break
-                if max_frames is not None and len(samples) >= max_frames:
-                    break
-            if max_frames is not None and len(samples) >= max_frames:
-                break
-
-        st.write(f"✅ パケット: {packet_count}, フレーム: {frame_count}, リサンプル済: {resampled_count}")
-
-        if not samples:
-            raise ValueError("MP3から音声データを取得できませんでした。")
-
-        audio = np.concatenate(samples).astype(np.float32)
-        max_val = np.max(np.abs(audio))
-        st.write("🔊 最大音量（正規化前）:", max_val)
-
-        if max_val > 0:
-            audio = (audio / max_val) * 0.9
-
-        return audio, 44100
-    except Exception as e:
-        raise RuntimeError(f"🔴 音声処理中の致命的エラー: {e}")
-
-# === ACRCloud認識ヘルパー ===
+# === ACRCloud用ヘルパー関数 ===
 def build_signature():
     http_method = "POST"
     http_uri = "/v1/identify"
@@ -103,7 +53,6 @@ def recognize(segment_bytes):
         'data_type': 'audio',
         'signature_version': '1'
     }
-
     try:
         response = requests.post(requrl, files=files, data=data, timeout=10)
         response.raise_for_status()
@@ -116,59 +65,71 @@ def seconds_to_mmss(seconds):
     s = int(seconds % 60)
     return f"{m:02d}:{s:02d}"
 
-# === メイン処理 ===
+# === ストリーミング処理ロジック ===
 if uploaded_file is not None:
-    st.write("📥 ファイルを受け取りました。読み込み中...")
+    st.write("📥 ファイルを受け取りました。ストリーミング処理を開始...")
 
     try:
-        audio, sr = read_mp3_with_resampler_debug(uploaded_file, max_frames=None)
-        st.success(f"✅ 音声読み込み成功（長さ: {len(audio)/sr:.1f} 秒）")
-    except Exception as e:
-        st.error(str(e))
-        st.stop()
+        file_like = io.BytesIO(uploaded_file.read())
+        container = av.open(file_like)
+        stream = next(s for s in container.streams if s.type == 'audio')
+        sr = 44100  # 出力サンプリングレート
+        resampler = AudioResampler(format="flt", layout="mono", rate=sr)
+        st.write("🔧 リサンプラー初期化済")
 
-    # === セグメント設定（30秒ごとに10秒）===
-    segment_duration_sec = 10
-    stride_sec = 30
-    segment_len = int(segment_duration_sec * sr)
-    stride_len = int(stride_sec * sr)
+        segment_duration_sec = 10
+        segment_len = sr * segment_duration_sec
+        stride_sec = 30
 
-    st.write("🎧 ACRCloud識別を開始（30秒ごとに10秒）...")
-    progress = st.progress(0)
-    results = []
-    shown = []
+        buffer_samples = []
+        total_samples = 0
+        segment_index = 0
+        results = []
+        shown = []
 
-    for i in range(0, len(audio), stride_len):
-        segment = audio[i : i + segment_len]
-        if len(segment) < segment_len:
-            break
+        progress = st.progress(0)
 
-        buffer = io.BytesIO()
-        sf.write(buffer, segment, sr, format="WAV", subtype="FLOAT")
-        buffer.seek(0)
+        for packet in container.demux(stream):
+            for frame in packet.decode():
+                resampled = resampler.resample(frame)
+                for mono_frame in resampled:
+                    samples = mono_frame.to_ndarray().flatten()
+                    buffer_samples.extend(samples)
+                    total_samples += len(samples)
 
-        mmss = seconds_to_mmss(i / sr)
+                    while len(buffer_samples) >= segment_len:
+                        # セグメント切り出し
+                        segment = np.array(buffer_samples[:segment_len], dtype=np.float32)
+                        buffer_samples = buffer_samples[sr * stride_sec:]  # 30秒スキップ分を破棄
 
-        # ✅ Spinner付き識別処理
-        with st.spinner(f"{mmss} を識別中..."):
-            result = recognize(buffer)
+                        mmss = seconds_to_mmss(segment_index * stride_sec)
+                        with st.spinner(f"{mmss} を識別中..."):
+                            buf = io.BytesIO()
+                            sf.write(buf, segment, sr, format="WAV", subtype="FLOAT")
+                            buf.seek(0)
+                            result = recognize(buf)
 
-        if result.get("status", {}).get("msg") == "Success":
-            music = result['metadata']['music'][0]
-            title = music.get("title", "Unknown")
-            artist = music.get("artists", [{}])[0].get("name", "Unknown")
-            if (title, artist) not in shown:
-                shown.append((title, artist))
-                results.append((i / sr, title, artist))
-                st.success(f"🕒 {mmss} → 🎶 {title} / {artist}")
+                        if result.get("status", {}).get("msg") == "Success":
+                            music = result['metadata']['music'][0]
+                            title = music.get("title", "Unknown")
+                            artist = music.get("artists", [{}])[0].get("name", "Unknown")
+                            if (title, artist) not in shown:
+                                shown.append((title, artist))
+                                results.append((mmss, title, artist))
+                                st.success(f"🕒 {mmss} → 🎶 {title} / {artist}")
+                        else:
+                            st.warning(f"🕒 {mmss} → ❌ 未識別")
+
+                        segment_index += 1
+                        progress.progress(min((segment_index * stride_sec * sr) / total_samples, 1.0))
+
+        st.success("🎉 識別完了！")
+
+        if results:
+            st.write("✅ 識別されたトラック一覧：")
+            for mmss, title, artist in results:
+                st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
         else:
-            st.warning(f"🕒 {mmss} → ❌ 未識別")
-
-        progress.progress(min((i + stride_len) / len(audio), 1.0))
-
-    if not results:
-        st.error("⚠️ 有効なトラックは見つかりませんでした。")
-    else:
-        st.write("✅ 識別されたトラック一覧（重複除去）：")
-        for t, title, artist in results:
-            st.write(f"🕒 {seconds_to_mmss(t)} → 🎵 {title} / {artist}")
+            st.write("⚠️ トラックは識別されませんでした。")
+    except Exception as e:
+        st.error(f"❌ エラー: {e}")
