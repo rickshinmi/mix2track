@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import requests
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from av.audio.resampler import AudioResampler
 
 # === ACRCloud API設定 ===
@@ -16,12 +17,7 @@ access_secret = st.secrets["api_keys"]["access_secret"]
 host = "identify-ap-southeast-1.acrcloud.com"
 requrl = f"https://{host}/v1/identify"
 
-st.set_page_config(page_title="🎧 DJミックス識別（動的進捗）", layout="centered")
-st.title("🎧 DJミックス識別アプリ")
-
-uploaded_file = st.file_uploader("DJミックスファイルをアップロード（MP3またはWAV）", type=["mp3", "wav"])
-
-# === ACRCloudヘルパー ===
+# === ACRCloudリクエスト ===
 def build_signature():
     http_method = "POST"
     http_uri = "/v1/identify"
@@ -34,61 +30,48 @@ def build_signature():
     ).decode('ascii')
     return sign, timestamp
 
-def recognize(segment_bytes):
+def recognize_segment(start_time_sec, segment, sr):
+    buf = io.BytesIO()
+    sf.write(buf, segment, sr, format="WAV", subtype="FLOAT")
+    buf.seek(0)
+
     sign, timestamp = build_signature()
-    files = [('sample', ('segment.wav', segment_bytes, 'audio/wav'))]
+    files = [('sample', ('segment.wav', buf, 'audio/wav'))]
     data = {
         'access_key': access_key,
-        'sample_bytes': len(segment_bytes.getvalue()),
+        'sample_bytes': len(buf.getvalue()),
         'timestamp': str(timestamp),
         'signature': sign,
         'data_type': 'audio',
         'signature_version': '1'
     }
+
     try:
         response = requests.post(requrl, files=files, data=data, timeout=10)
         response.raise_for_status()
-        return response.json()
+        return start_time_sec, response.json()
     except Exception as e:
-        return {"status": {"msg": f"Request failed: {e}", "code": "N/A"}}
+        return start_time_sec, {"status": {"msg": f"Request failed: {e}", "code": "N/A"}}
 
 def seconds_to_mmss(seconds):
     m = int(seconds // 60)
     s = int(seconds % 60)
     return f"{m:02d}:{s:02d}"
 
-def process_segment(segment_index, segment, sr, shown, stride_sec):
-    mmss = seconds_to_mmss(segment_index * stride_sec)
-    buf = io.BytesIO()
-    sf.write(buf, segment, sr, format="WAV", subtype="FLOAT")
-    buf.seek(0)
-
-    result = recognize(buf)
-    if result.get("status", {}).get("msg") == "Success":
-        music = result['metadata']['music'][0]
-        title = music.get("title", "Unknown")
-        artist = music.get("artists", [{}])[0].get("name", "Unknown")
-        if (title, artist) not in shown:
-            shown.append((title, artist))
-            st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
-
 # === メイン処理 ===
+st.set_page_config(page_title="🎧 DJミックス識別（正しい時間表示）", layout="centered")
+st.title("🎧 DJミックス識別アプリ（タイムスタンプ修正版）")
+
+uploaded_file = st.file_uploader("DJミックスファイルをアップロード（MP3またはWAV）", type=["mp3", "wav"])
+
 if uploaded_file is not None:
-    st.write("📥 ファイルを受け取りました。解析を開始します...")
+    st.write("📥 ファイルを受け取りました。セグメントを準備中...")
     file_ext = uploaded_file.name.split('.')[-1].lower()
     sr = 44100
     segment_duration_sec = 20
     stride_sec = 30
     segment_len = sr * segment_duration_sec
-    buffer_samples = []
-    segment_index = 0
-    shown = []
-
-    progress = st.progress(0)
-    progress_text = st.empty()
-
-    recognized_count = 0
-    max_progress_count = 1  # 動的に更新される安全な初期値
+    segments = []
 
     try:
         if file_ext == "wav":
@@ -99,28 +82,22 @@ if uploaded_file is not None:
                 st.error(f"⚠️ サンプリングレートが {sr_in}Hz です。44100Hz のみ対応しています。")
                 st.stop()
             buffer_samples = audio_data.tolist()
-
+            start_time_sec = 0
             while len(buffer_samples) >= segment_len:
                 segment = np.array(buffer_samples[:segment_len], dtype=np.float32)
+                segments.append((start_time_sec, segment))
                 buffer_samples = buffer_samples[sr * stride_sec:]
-                process_segment(segment_index, segment, sr, shown, stride_sec)
-                segment_index += 1
-                recognized_count += 1
-                max_progress_count = max(max_progress_count, recognized_count)
-                progress_ratio = recognized_count / max_progress_count
-                progress.progress(progress_ratio)
-                progress_text.text(f"識別済み: {recognized_count} / {max_progress_count}（{progress_ratio * 100:.1f}%）")
+                start_time_sec += stride_sec
+            if len(buffer_samples) >= sr * 5:
+                segments.append((start_time_sec, np.array(buffer_samples[:segment_len], dtype=np.float32)))
 
         elif file_ext == "mp3":
-            try:
-                file_like = io.BytesIO(uploaded_file.read())
-                container = av.open(file_like)
-                stream = next(s for s in container.streams if s.type == 'audio')
-                resampler = AudioResampler(format="flt", layout="mono", rate=sr)
-            except Exception as e:
-                st.error(f"❌ MP3読み込みに失敗しました: {e}")
-                st.stop()
-
+            file_like = io.BytesIO(uploaded_file.read())
+            container = av.open(file_like)
+            stream = next(s for s in container.streams if s.type == 'audio')
+            resampler = AudioResampler(format="flt", layout="mono", rate=sr)
+            buffer_samples = []
+            start_time_sec = 0
             for packet in container.demux(stream):
                 for frame in packet.decode():
                     try:
@@ -133,29 +110,46 @@ if uploaded_file is not None:
                         except:
                             continue
                         buffer_samples.extend(samples)
-
                         while len(buffer_samples) >= segment_len:
                             segment = np.array(buffer_samples[:segment_len], dtype=np.float32)
+                            segments.append((start_time_sec, segment))
                             buffer_samples = buffer_samples[sr * stride_sec:]
-                            process_segment(segment_index, segment, sr, shown, stride_sec)
-                            segment_index += 1
-                            recognized_count += 1
-                            max_progress_count = max(max_progress_count, recognized_count)
-                            progress_ratio = recognized_count / max_progress_count
-                            progress.progress(progress_ratio)
-                            progress_text.text(f"識別済み: {recognized_count} / {max_progress_count}（{progress_ratio * 100:.1f}%）")
+                            start_time_sec += stride_sec
+            if len(buffer_samples) >= sr * 5:
+                segments.append((start_time_sec, np.array(buffer_samples[:segment_len], dtype=np.float32)))
 
-        if len(buffer_samples) >= sr * 5:
-            segment = np.array(buffer_samples[:segment_len], dtype=np.float32)
-            process_segment(segment_index, segment, sr, shown, stride_sec)
-            recognized_count += 1
-            max_progress_count = max(max_progress_count, recognized_count)
-            progress_ratio = recognized_count / max_progress_count
-            progress.progress(progress_ratio)
-            progress_text.text(f"識別済み: {recognized_count} / {max_progress_count}（{progress_ratio * 100:.1f}%）")
+        st.write(f"🔢 セグメント数: {len(segments)}")
+        st.write("🚀 識別処理を開始します（最大2並列）...")
+
+        progress = st.progress(0)
+        progress_text = st.empty()
+        results = []
+        shown = []
+        total_segments = len(segments)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_to_time = {
+                executor.submit(recognize_segment, start_sec, seg, sr): start_sec
+                for start_sec, seg in segments
+            }
+
+            for i, future in enumerate(as_completed(future_to_time)):
+                start_time_sec, result = future.result()
+                mmss = seconds_to_mmss(start_time_sec)
+
+                if result.get("status", {}).get("msg") == "Success":
+                    music = result['metadata']['music'][0]
+                    title = music.get("title", "Unknown")
+                    artist = music.get("artists", [{}])[0].get("name", "Unknown")
+                    if (title, artist) not in shown:
+                        shown.append((title, artist))
+                        results.append((mmss, title, artist))
+                        st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
+
+                progress.progress((i + 1) / total_segments)
+                progress_text.text(f"進捗: {i + 1} / {total_segments}（{(i + 1) / total_segments * 100:.1f}%）")
 
         st.success("🎉 識別完了！")
 
     except Exception as e:
         st.error(f"❌ 処理エラー: {e}")
-
