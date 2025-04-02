@@ -59,8 +59,8 @@ def seconds_to_mmss(seconds):
     return f"{m:02d}:{s:02d}"
 
 # === メイン処理 ===
-st.set_page_config(page_title="🎧 DJミックス識別（正しい時間表示）", layout="centered")
-st.title("🎧 DJミックス識別アプリ（タイムスタンプ修正版）")
+st.set_page_config(page_title="🎧 DJミックス識別（時間正確進捗）", layout="centered")
+st.title("🎧 DJミックス識別アプリ（時間進捗対応版）")
 
 uploaded_file = st.file_uploader("DJミックスファイルをアップロード（MP3またはWAV）", type=["mp3", "wav"])
 
@@ -72,6 +72,7 @@ if uploaded_file is not None:
     stride_sec = 30
     segment_len = sr * segment_duration_sec
     segments = []
+    total_duration_sec = 0
 
     try:
         if file_ext == "wav":
@@ -82,6 +83,7 @@ if uploaded_file is not None:
                 st.error(f"⚠️ サンプリングレートが {sr_in}Hz です。44100Hz のみ対応しています。")
                 st.stop()
             buffer_samples = audio_data.tolist()
+            total_duration_sec = len(audio_data) / sr
             start_time_sec = 0
             while len(buffer_samples) >= segment_len:
                 segment = np.array(buffer_samples[:segment_len], dtype=np.float32)
@@ -95,6 +97,7 @@ if uploaded_file is not None:
             file_like = io.BytesIO(uploaded_file.read())
             container = av.open(file_like)
             stream = next(s for s in container.streams if s.type == 'audio')
+            total_duration_sec = float(stream.duration * stream.time_base) if stream.duration else 0
             resampler = AudioResampler(format="flt", layout="mono", rate=sr)
             buffer_samples = []
             start_time_sec = 0
@@ -118,6 +121,10 @@ if uploaded_file is not None:
             if len(buffer_samples) >= sr * 5:
                 segments.append((start_time_sec, np.array(buffer_samples[:segment_len], dtype=np.float32)))
 
+        if total_duration_sec == 0:
+            total_duration_sec = len(segments) * stride_sec
+
+        st.write(f"⏱ 音源全体の長さ: {seconds_to_mmss(total_duration_sec)}")
         st.write(f"🔢 セグメント数: {len(segments)}")
         st.write("🚀 識別処理を開始します（最大2並列）...")
 
@@ -125,7 +132,7 @@ if uploaded_file is not None:
         progress_text = st.empty()
         results = []
         shown = []
-        total_segments = len(segments)
+        current_max_time = 0
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             future_to_time = {
@@ -146,8 +153,11 @@ if uploaded_file is not None:
                         results.append((mmss, title, artist))
                         st.write(f"🕒 {mmss} → 🎵 {title} / {artist}")
 
-                progress.progress((i + 1) / total_segments)
-                progress_text.text(f"進捗: {i + 1} / {total_segments}（{(i + 1) / total_segments * 100:.1f}%）")
+                # 正確な進捗更新（最大セグメント時刻まで進捗）
+                current_max_time = max(current_max_time, start_time_sec)
+                ratio = min(current_max_time / total_duration_sec, 1.0)
+                progress.progress(ratio)
+                progress_text.text(f"再生時間ベース進捗: {ratio * 100:.1f}%")
 
         st.success("🎉 識別完了！")
 
