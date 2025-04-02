@@ -77,9 +77,9 @@ if uploaded_file is not None:
         resampler = AudioResampler(format="flt", layout="mono", rate=sr)
         st.write("🔧 リサンプラー初期化済")
 
-        segment_duration_sec = 10
+        segment_duration_sec = 20
         segment_len = sr * segment_duration_sec
-        stride_sec = 30
+        stride_sec = 60
 
         buffer_samples = []
         total_samples = 0
