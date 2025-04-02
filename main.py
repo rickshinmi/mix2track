@@ -148,8 +148,10 @@ if uploaded_file is not None:
         buffer.seek(0)
 
         mmss = seconds_to_mmss(i / sr)
-        st.write(f"🕒 {mmss} → 🔍 解析中...")
-        result = recognize(buffer)
+
+        # ✅ Spinner付き識別処理
+        with st.spinner(f"{mmss} を識別中..."):
+            result = recognize(buffer)
 
         if result.get("status", {}).get("msg") == "Success":
             music = result['metadata']['music'][0]
