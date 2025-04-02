@@ -21,7 +21,7 @@ st.title("🎧 DJミックス識別（10秒ごとリアルタイム処理）")
 
 uploaded_file = st.file_uploader("MP3ファイルをアップロード", type=["mp3"])
 
-# === ACRCloud用ヘルパー関数 ===
+# === ACRCloud認識ヘルパー ===
 def build_signature():
     http_method = "POST"
     http_uri = "/v1/identify"
@@ -65,7 +65,7 @@ def seconds_to_mmss(seconds):
     s = int(seconds % 60)
     return f"{m:02d}:{s:02d}"
 
-# === ストリーミング処理ロジック ===
+# === メイン処理 ===
 if uploaded_file is not None:
     st.write("📥 ファイルを受け取りました。ストリーミング処理を開始...")
 
@@ -73,7 +73,7 @@ if uploaded_file is not None:
         file_like = io.BytesIO(uploaded_file.read())
         container = av.open(file_like)
         stream = next(s for s in container.streams if s.type == 'audio')
-        sr = 44100  # 出力サンプリングレート
+        sr = 44100
         resampler = AudioResampler(format="flt", layout="mono", rate=sr)
         st.write("🔧 リサンプラー初期化済")
 
@@ -98,15 +98,27 @@ if uploaded_file is not None:
                     total_samples += len(samples)
 
                     while len(buffer_samples) >= segment_len:
-                        # セグメント切り出し
                         segment = np.array(buffer_samples[:segment_len], dtype=np.float32)
-                        buffer_samples = buffer_samples[sr * stride_sec:]  # 30秒スキップ分を破棄
+                        buffer_samples = buffer_samples[sr * stride_sec:]  # 30秒スキップ
 
                         mmss = seconds_to_mmss(segment_index * stride_sec)
+
+                        buf = io.BytesIO()
+                        sf.write(buf, segment, sr, format="WAV", subtype="FLOAT")
+                        buf.seek(0)
+
+                        # ✅ 最初のセグメントだけWAVで確認・DL可能
+                        if segment_index == 0:
+                            st.info("🧪 最初のセグメントをWAVで確認できます")
+                            st.audio(buf.getvalue(), format="audio/wav")
+                            st.download_button(
+                                label="⬇️ 最初の10秒WAVをダウンロード",
+                                data=buf.getvalue(),
+                                file_name="segment_00_00.wav",
+                                mime="audio/wav"
+                            )
+
                         with st.spinner(f"{mmss} を識別中..."):
-                            buf = io.BytesIO()
-                            sf.write(buf, segment, sr, format="WAV", subtype="FLOAT")
-                            buf.seek(0)
                             result = recognize(buf)
 
                         if result.get("status", {}).get("msg") == "Success":
