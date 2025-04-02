@@ -66,7 +66,7 @@ def recognize(segment_bytes):
         st.error(f"❌ その他のエラー: {e}")
         return {"status": {"msg": f"Unexpected error: {e}", "code": "N/A"}}
 
-# === PyAV を使って MP3 を NumPy に読み込む ===
+# === PyAVでMP3を読み込む関数（修正版）===
 def read_mp3_with_pyav(file_like):
     try:
         container = av.open(file_like)
@@ -75,14 +75,13 @@ def read_mp3_with_pyav(file_like):
 
         for packet in container.demux(stream):
             for frame in packet.decode():
-                # 各フレームをflattenして1Dにする
-                data = frame.to_ndarray().flatten()
+                data = frame.to_ndarray().flatten()  # フレームを1Dにして統一
                 samples.append(data)
 
         if not samples:
             raise ValueError("MP3から音声データを取得できませんでした。")
 
-        audio = np.concatenate(samples).astype(np.float32) / 32768.0  # int16 → float32正規化
+        audio = np.concatenate(samples).astype(np.float32) / 32768.0
         sr = stream.rate
         return audio, sr
     except Exception as e:
@@ -92,7 +91,7 @@ def read_mp3_with_pyav(file_like):
 st.set_page_config(page_title="MP3対応 DJミックス識別アプリ", layout="centered")
 st.title("🎧 MP3対応 DJ mix トラック識別アプリ")
 
-uploaded_file = st.file_uploader("DJミックスのMP3をアップロード", type=["mp3"])
+uploaded_file = st.file_uploader("DJミックスのMP3ファイルをアップロード", type=["mp3"])
 
 if uploaded_file is not None:
     st.write("⏳ 音源を読み込み中...")
@@ -104,7 +103,7 @@ if uploaded_file is not None:
         st.stop()
 
     if audio.ndim > 1:
-        audio = audio.mean(axis=1)
+        audio = audio.mean(axis=1)  # モノラルに変換
 
     duration = len(audio) / sr
     segment_length_sec = 30
