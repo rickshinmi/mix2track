@@ -20,12 +20,14 @@ def read_mp3_with_pyav(file_like, max_frames=1000):
             for frame in packet.decode():
                 if len(samples) >= max_frames:
                     break
-                samples.append(frame.to_ndarray().flatten())
+                data = frame.to_ndarray().flatten()
+                samples.append(data)
 
         if not samples:
             raise ValueError("MP3から音声データを取得できませんでした。")
 
-        audio = np.concatenate(samples).astype(np.float32) / 32768.0
+        # 無音対策：int16のまま扱う
+        audio = np.concatenate(samples).astype(np.int16)
         sr = stream.rate
         return audio, sr
     except av.AVError as e:
@@ -38,7 +40,7 @@ if uploaded_file is not None:
 
     try:
         audio, sr = read_mp3_with_pyav(uploaded_file)
-        st.success(f"✅ 読み込み成功！サンプル数: {len(audio)}, サンプリングレート: {sr}")
+        st.success(f"✅ MP3読み込み成功！サンプル数: {len(audio)}, サンプリングレート: {sr}")
     except Exception as e:
         st.error(f"❌ 読み込み失敗: {e}")
         st.stop()
@@ -46,7 +48,7 @@ if uploaded_file is not None:
     # モノラル変換（必要な場合）
     if audio.ndim > 1:
         st.write("🎚 ステレオ音源をモノラルに変換中...")
-        audio = audio.mean(axis=1)
+        audio = audio.mean(axis=1).astype(np.int16)
 
     st.write("✂️ 最初の30秒分を切り出して、WAVセグメントに変換します...")
 
